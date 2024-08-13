@@ -353,39 +353,51 @@ pub unsafe extern "C" fn ioctl(fd: RawFd, request: c_ulong, argp: *mut c_void) -
             let actual_sub_system_id = (orig_sub_system_id & 0xffff0000) >> 16;
 
             let (spoofed_devid, spoofed_subsysid) = match actual_device_id {
+                //V100X V100L V100 V100DX V100D V100S
+                0x1DB1 | 0x1DB3 | 0x1DB4 | 0x1DB5 | 0x1DB6 | 0x1DF6 => {
+                    (actual_device_id, actual_sub_system_id)
+                }
+                //RTX8000/6000 RTX8000P T4
+                0x1E30 | 0x1E78 | 0x1EB8 => {
+                    (actual_device_id, actual_sub_system_id)
+                }
                 // Maxwell
-                0x1340..=0x13bd | 0x174d..=0x179c => {
+                0x1340..=0x137F | 0x1380..=0x13BF => {
+                //GM108 | GM107
                     // Tesla M10
                     (0x13bd, 0x1160)
                 }
                 // Maxwell 2.0
-                0x13c0..=0x1436 | 0x1617..=0x1667 | 0x17c2..=0x17fd => {
-                    // Tesla M60
-                    (0x13f2, actual_sub_system_id)
+                0x17c0..=0x17FF | 0x13c0..=0x13FF | 0x1400..=0x143F => {
+                //GM200 | GM204 | GM206
+                    // Tesla M10
+                    (0x13bd, 0x1160)
                 }
                 // Pascal
-                0x15f0 | 0x15f1 | 0x1b00..=0x1d56 | 0x1725..=0x172f => {
-                    // Tesla P40
-                    (0x1b38, actual_sub_system_id)
+                0x15C0..=0x15FF | 0x1B00..=0x1B3F | 0x1B80..=0x1BBF | 0x1C00..=0x1C3F | 0x1C80..=0x1CBF | 0x1D00..=0x1D3F => {
+                //GP100 | GP102 | GP104 | GP106 | GP107 | GP108
+                    // A5500
+                    (0x2233, 0x165a)
                 }
                 // GV100 Volta
                 //
                 // 0x1d81 = TITAN V
                 // 0x1dba = Quadro GV100 32GB
-                0x1d81 | 0x1dba => {
+                0x1D80..=0x1dba => {
+                //ARCH_VOLTA
                     // Tesla V100 32GB PCIE
                     (0x1db6, actual_sub_system_id)
                 }
                 // Turing
-                0x1e02..=0x1ff9 | 0x2182..=0x21d1 => {
+                0x1E00..=0x1E3F | 0x1E80..=0x1EBF | 0x1F00..=0x1F3F | 0x2180..=0x21BF | 0x1F80..=0x1FBF => {
                     // Quadro RTX 6000
                     (0x1e30, 0x12ba)
                 }
                 // Ampere
-                0x2200..=0x2600 => {
-                    // RTX A6000
-                    (0x2230, actual_sub_system_id)
-                }
+                //0x2200..=0x2600 => {
+                //    // RTX A6000
+                //    (0x2230, actual_sub_system_id)
+                //}
                 _ => (actual_device_id, actual_sub_system_id),
             };
 
