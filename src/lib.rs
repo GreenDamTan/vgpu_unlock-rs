@@ -560,6 +560,7 @@ fn handle_profile_override<C: VgpuConfigLike>(config: &mut C) -> bool {
     #[cfg(feature = "proxmox")]
     if let Some(vmid) = mdev_uuid.and_then(uuid_to_vmid) {
         let vmid = vmid.to_string();
+        info!("VMID {} profile", vmid);
         if let Some(config_override) = config_overrides.vm.get(vmid.as_str()) {
             info!("Applying proxmox VMID {} profile overrides", vmid);
 
