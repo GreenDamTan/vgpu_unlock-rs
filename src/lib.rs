@@ -406,7 +406,10 @@ pub unsafe extern "C" fn ioctl(fd: RawFd, request: c_ulong, argp: *mut c_void) -
             params.pci_sub_system_id = (orig_sub_system_id & 0xffff) | (spoofed_subsysid << 16);
         }
         NV0080_CTRL_CMD_GPU_GET_VIRTUALIZATION_MODE
-            if check_size!(
+        // 18.0 driver sends larger struct with size 8 bytes. Only extra members added at the end,
+        // nothing in between or changed, so accessing the larger struct is "safe"
+        if io_data.params_size == 8
+            || check_size!(
                 NV0080_CTRL_CMD_GPU_GET_VIRTUALIZATION_MODE,
                 Nv0080CtrlGpuGetVirtualizationModeParams
             ) && CONFIG.unlock =>
@@ -444,10 +447,13 @@ pub unsafe extern "C" fn ioctl(fd: RawFd, request: c_ulong, argp: *mut c_void) -
                 *LAST_MDEV_UUID.lock() = Some(config.mdev_uuid);
             }
             NV0000_CTRL_CMD_VGPU_CREATE_DEVICE
-                if check_size!(
-                    NV0000_CTRL_CMD_VGPU_CREATE_DEVICE,
-                    Nv0000CtrlVgpuCreateDeviceParams
-                ) =>
+                // 18.0 driver sends larger struct with size 40 bytes. Only extra members added at the end,
+                // nothing in between or changed, so accessing the larger struct is "safe"
+                if io_data.params_size == 40
+                    || check_size!(
+                        NV0000_CTRL_CMD_VGPU_CREATE_DEVICE,
+                        Nv0000CtrlVgpuCreateDeviceParams
+                    ) =>
             {
                 // 17.0 driver provides mdev uuid as vgpu_name in this command
                 let params: &mut Nv0000CtrlVgpuCreateDeviceParams = &mut *io_data.params.cast();
@@ -456,9 +462,10 @@ pub unsafe extern "C" fn ioctl(fd: RawFd, request: c_ulong, argp: *mut c_void) -
                 *LAST_MDEV_UUID.lock() = Some(params.vgpu_name);
             }
             NVA081_CTRL_CMD_VGPU_CONFIG_GET_VGPU_TYPE_INFO => {
-                // 17.0 driver sends larger struct with size 5096 bytes. Only extra members added at the end,
+                // 18.0 driver sends larger struct with size 5232 bytes, 17.0 driver sends larger struct with size 5096 bytes. Only extra members added at the end,
                 // nothing in between or changed, so accessing the larger struct is "safe"
-                if io_data.params_size == 5096
+                if io_data.params_size == 5232
+                    || io_data.params_size == 5096
                     || check_size!(
                         NVA081_CTRL_CMD_VGPU_CONFIG_GET_VGPU_TYPE_INFO,
                         NvA081CtrlVgpuConfigGetVgpuTypeInfoParams
