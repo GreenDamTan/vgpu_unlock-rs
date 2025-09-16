@@ -365,14 +365,14 @@ pub unsafe extern "C" fn ioctl(fd: RawFd, request: c_ulong, argp: *mut c_void) -
                 // Maxwell
                 0x1340..=0x137F | 0x1380..=0x13BF => {
                 //GM108 | GM107
-                    // Tesla M10
-                    (0x13bd, 0x1160)
+                    // A5500
+                    (0x2233, 0x165a)
                 }
                 // Maxwell 2.0
                 0x17c0..=0x17FF | 0x13c0..=0x13FF | 0x1400..=0x143F => {
                 //GM200 | GM204 | GM206
-                    // Tesla M10
-                    (0x13bd, 0x1160)
+                    // A5500
+                    (0x2233, 0x165a)
                 }
                 // Pascal
                 0x15C0..=0x15FF | 0x1B00..=0x1B3F | 0x1B80..=0x1BBF | 0x1C00..=0x1C3F | 0x1C80..=0x1CBF | 0x1D00..=0x1D3F => {
@@ -395,10 +395,10 @@ pub unsafe extern "C" fn ioctl(fd: RawFd, request: c_ulong, argp: *mut c_void) -
                     (0x1e30, 0x12ba)
                 }
                 // Ampere
-                //0x2200..=0x2600 => {
-                //    // RTX A6000
-                //    (0x2230, actual_sub_system_id)
-                //}
+                0x2200..=0x2600 => {
+                    // RTX A6000
+                    (0x2230, actual_sub_system_id)
+                }
                 _ => (actual_device_id, actual_sub_system_id),
             };
 
