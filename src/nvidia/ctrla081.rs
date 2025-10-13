@@ -41,6 +41,7 @@ pub struct NvA081CtrlVgpuInfo {
     pub encoder_capacity: u32,
     pub bar1_length: AlignedU64,
     pub frl_enable: u32,
+    pub vgpu_ssvid: u16,
     pub adapter_name: [u8; NV2080_GPU_MAX_NAME_STRING_LENGTH],
     pub adapter_name_unicode: [u16; NV2080_GPU_MAX_NAME_STRING_LENGTH],
     pub short_gpu_name_string: [u8; NV2080_GPU_MAX_NAME_STRING_LENGTH],
