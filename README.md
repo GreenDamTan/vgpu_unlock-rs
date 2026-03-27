@@ -65,4 +65,19 @@ following:
 unlock_migration = true
 ```
 
+If you want to force the spoofed PCI device ID and subsystem ID used by the
+unlock logic, add them to `/etc/vgpu_unlock/profile_override.toml`. When these
+values are present, they take precedence over the built-in auto-detection:
+
+```toml
+[custom]
+spoofed_devid = "0x2230"
+spoofed_subsysid = "0x165a"
+```
+
+Both fields also accept decimal integers. For backward compatibility, these
+fields are also accepted in `/etc/vgpu_unlock/config.toml`, but
+`profile_override.toml` takes priority. You can set either field by itself; if
+only one is present, only that value is overridden.
+
 Happy hacking!

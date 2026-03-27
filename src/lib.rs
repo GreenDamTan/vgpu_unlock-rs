@@ -224,12 +224,22 @@ impl VgpuConfigLike for NvA081CtrlVgpuInfo {
 #[derive(Deserialize)]
 struct ProfileOverridesConfig {
     #[serde(default)]
+    custom: CustomOverrides,
+    #[serde(default)]
     profile: HashMap<String, VgpuProfileOverride>,
     #[serde(default)]
     mdev: HashMap<String, VgpuProfileOverride>,
     #[cfg(feature = "proxmox")]
     #[serde(default)]
     vm: HashMap<String, VgpuProfileOverride>,
+}
+
+#[derive(Default, Deserialize)]
+struct CustomOverrides {
+    #[serde(default, deserialize_with = "crate::config::deserialize_optional_pci_id")]
+    spoofed_devid: Option<u32>,
+    #[serde(default, deserialize_with = "crate::config::deserialize_optional_pci_id")]
+    spoofed_subsysid: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -353,7 +363,7 @@ pub unsafe extern "C" fn ioctl(fd: RawFd, request: c_ulong, argp: *mut c_void) -
             let actual_device_id = (orig_device_id & 0xffff0000) >> 16;
             let actual_sub_system_id = (orig_sub_system_id & 0xffff0000) >> 16;
 
-            let (spoofed_devid, spoofed_subsysid) = match actual_device_id {
+            let (mut spoofed_devid, mut spoofed_subsysid) = match actual_device_id {
                 //V100X V100L V100 V100DX V100D V100S
                 0x1DB1 | 0x1DB3 | 0x1DB4 | 0x1DB5 | 0x1DB6 | 0x1DF6 => {
                     (actual_device_id, actual_sub_system_id)
@@ -401,6 +411,32 @@ pub unsafe extern "C" fn ioctl(fd: RawFd, request: c_ulong, argp: *mut c_void) -
                 }
                 _ => (actual_device_id, actual_sub_system_id),
             };
+
+            let profile_override_config = load_profile_overrides().ok();
+
+            if let Some(config_spoofed_devid) = profile_override_config
+                .as_ref()
+                .and_then(|config| config.custom.spoofed_devid)
+                .or(CONFIG.spoofed_devid)
+            {
+                info!(
+                    "Overriding spoofed PCI device ID: {:#06x} -> {:#06x}",
+                    spoofed_devid, config_spoofed_devid
+                );
+                spoofed_devid = config_spoofed_devid;
+            }
+
+            if let Some(config_spoofed_subsysid) = profile_override_config
+                .as_ref()
+                .and_then(|config| config.custom.spoofed_subsysid)
+                .or(CONFIG.spoofed_subsysid)
+            {
+                info!(
+                    "Overriding spoofed PCI subsystem ID: {:#06x} -> {:#06x}",
+                    spoofed_subsysid, config_spoofed_subsysid
+                );
+                spoofed_subsysid = config_spoofed_subsysid;
+            }
 
             params.pci_device_id = (orig_device_id & 0xffff) | (spoofed_devid << 16);
             params.pci_sub_system_id = (orig_sub_system_id & 0xffff) | (spoofed_subsysid << 16);
@@ -532,18 +568,22 @@ fn load_overrides() -> Result<String, bool> {
     Ok(config_overrides)
 }
 
-fn handle_profile_override<C: VgpuConfigLike>(config: &mut C) -> bool {
-    let config_overrides = match load_overrides() {
-        Ok(overrides) => overrides,
-        Err(e) => return e,
-    };
+fn load_profile_overrides() -> Result<ProfileOverridesConfig, bool> {
+    let config_overrides = load_overrides()?;
 
-    let config_overrides: ProfileOverridesConfig = match toml::from_str(&config_overrides) {
-        Ok(config) => config,
+    match toml::from_str(&config_overrides) {
+        Ok(config) => Ok(config),
         Err(e) => {
             error!("Failed to decode config: {}", e);
-            return false;
+            Err(false)
         }
+    }
+}
+
+fn handle_profile_override<C: VgpuConfigLike>(config: &mut C) -> bool {
+    let config_overrides = match load_profile_overrides() {
+        Ok(overrides) => overrides,
+        Err(e) => return e,
     };
 
     let vgpu_type = format!("nvidia-{}", config.vgpu_type());
