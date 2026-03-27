@@ -364,12 +364,8 @@ pub unsafe extern "C" fn ioctl(fd: RawFd, request: c_ulong, argp: *mut c_void) -
             let actual_sub_system_id = (orig_sub_system_id & 0xffff0000) >> 16;
 
             let (mut spoofed_devid, mut spoofed_subsysid) = match actual_device_id {
-                //V100X V100L V100 V100DX V100D V100S
-                0x1DB1 | 0x1DB3 | 0x1DB4 | 0x1DB5 | 0x1DB6 | 0x1DF6 => {
-                    (actual_device_id, actual_sub_system_id)
-                }
-                //RTX8000/6000 RTX8000P T4
-                0x1E30 | 0x1E78 | 0x1EB8 => {
+                //T4
+                0x1EB8 => {
                     (actual_device_id, actual_sub_system_id)
                 }
                 // Maxwell
@@ -396,13 +392,13 @@ pub unsafe extern "C" fn ioctl(fd: RawFd, request: c_ulong, argp: *mut c_void) -
                 // 0x1dba = Quadro GV100 32GB
                 0x1D80..=0x1dba => {
                 //ARCH_VOLTA
-                    // Tesla V100 32GB PCIE
-                    (0x1db6, actual_sub_system_id)
+                    // A5500
+                    (0x2233, 0x165a)
                 }
                 // Turing
                 0x1E00..=0x1E3F | 0x1E80..=0x1EBF | 0x1F00..=0x1F3F | 0x2180..=0x21BF | 0x1F80..=0x1FBF => {
-                    // Quadro RTX 6000
-                    (0x1e30, 0x12ba)
+                    // A5500
+                    (0x2233, 0x165a)
                 }
                 // Ampere
                 0x2200..=0x2600 => {
