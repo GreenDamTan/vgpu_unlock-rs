@@ -1,2 +1,6 @@
 /target
 Cargo.lock
+.idea/
+.opencode/
+opencode
+.sisyphus/
