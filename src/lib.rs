@@ -767,18 +767,33 @@ fn apply_proxmox_profile_override<C: VgpuConfigLike>(
     vgpu_type: &str,
     mut config_override: VgpuProfileOverride,
 ) -> bool {
+    // 0x6000000 bytes = 96 MiB. Keep at least this much framebuffer reservation.
+    const MIN_FRAMEBUFFER_RESERVATION: u64 = 0x6000000;
+
     if let Some(total_framebuffer) = config_override.framebuffer {
-        let framebuffer_reservation = *config.fb_reservation();
+        let mut framebuffer_reservation = *config.fb_reservation();
 
         if total_framebuffer < framebuffer_reservation {
-            error!(
-                "Invalid Proxmox framebuffer override for {}: requested total framebuffer {} bytes is smaller than framebuffer_reservation {} bytes; computed framebuffer would be negative",
+            if total_framebuffer < MIN_FRAMEBUFFER_RESERVATION {
+                error!(
+                    "Invalid Proxmox framebuffer override for {}: requested total framebuffer {} bytes is smaller than minimum framebuffer_reservation {} bytes; computed framebuffer would be negative",
+                    vgpu_type,
+                    total_framebuffer,
+                    MIN_FRAMEBUFFER_RESERVATION
+                );
+
+                return false;
+            }
+
+            info!(
+                "Reducing Proxmox framebuffer_reservation for {}: {} bytes -> {} bytes",
                 vgpu_type,
-                total_framebuffer,
-                framebuffer_reservation
+                framebuffer_reservation,
+                MIN_FRAMEBUFFER_RESERVATION
             );
 
-            return false;
+            framebuffer_reservation = MIN_FRAMEBUFFER_RESERVATION;
+            config_override.framebuffer_reservation = Some(framebuffer_reservation);
         }
 
         let framebuffer = total_framebuffer - framebuffer_reservation;
