@@ -49,6 +49,12 @@ macro_rules! info {
         $crate::log::syslog(::libc::LOG_NOTICE, format_args!($($arg)+))
     };
 }
+macro_rules! warning {
+    ($($arg:tt)+) => {
+        $crate::log::syslog(::libc::LOG_WARNING, format_args!($($arg)+))
+    };
+}
 
 pub(crate) use error;
 pub(crate) use info;
+pub(crate) use warning;

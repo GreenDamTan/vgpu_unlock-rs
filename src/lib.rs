@@ -38,7 +38,7 @@ mod uuid;
 
 use crate::config::Config;
 use crate::format::WideCharFormat;
-use crate::log::{error, info};
+use crate::log::{error, info, warning};
 use crate::nvidia::ctrl0000vgpu::{
     Nv0000CtrlVgpuCreateDeviceParams, Nv0000CtrlVgpuGetStartDataParams,
     NV0000_CTRL_CMD_VGPU_CREATE_DEVICE, NV0000_CTRL_CMD_VGPU_GET_START_DATA,
@@ -242,7 +242,7 @@ struct CustomOverrides {
     spoofed_subsysid: Option<u32>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct VgpuProfileOverride {
     gpu_type: Option<u32>,
     card_name: Option<String>,
@@ -577,45 +577,224 @@ fn load_profile_overrides() -> Result<ProfileOverridesConfig, bool> {
 }
 
 fn handle_profile_override<C: VgpuConfigLike>(config: &mut C) -> bool {
-    let config_overrides = match load_profile_overrides() {
-        Ok(overrides) => overrides,
-        Err(e) => return e,
-    };
-
     let vgpu_type = format!("nvidia-{}", config.vgpu_type());
     let mdev_uuid = LAST_MDEV_UUID.lock().clone();
+    let config_overrides = load_profile_overrides();
 
-    if let Some(config_override) = config_overrides.profile.get(vgpu_type.as_str()) {
-        info!("Applying profile {} overrides", vgpu_type);
+    match &config_overrides {
+        Ok(config_overrides) => {
+            if let Some(config_override) = config_overrides.profile.get(vgpu_type.as_str()) {
+                info!("Applying profile {} overrides", vgpu_type);
 
-        if !apply_profile_override(config, &vgpu_type, config_override) {
-            return false;
-        }
-    }
-    if let Some(mdev_uuid) = mdev_uuid.map(|uuid| uuid.to_string()) {
-        if let Some(config_override) = config_overrides.mdev.get(mdev_uuid.as_str()) {
-            info!("Applying mdev UUID {} profile overrides", mdev_uuid);
+                if !apply_profile_override(config, &vgpu_type, config_override) {
+                    return false;
+                }
+            }
+            if let Some(mdev_uuid) = mdev_uuid.map(|uuid| uuid.to_string()) {
+                if let Some(config_override) = config_overrides.mdev.get(mdev_uuid.as_str()) {
+                    info!("Applying mdev UUID {} profile overrides", mdev_uuid);
 
-            if !apply_profile_override(config, &vgpu_type, config_override) {
-                return false;
+                    if !apply_profile_override(config, &vgpu_type, config_override) {
+                        return false;
+                    }
+                }
             }
         }
+        Err(true) => {}
+        Err(false) => return false,
     }
 
     #[cfg(feature = "proxmox")]
     if let Some(vmid) = mdev_uuid.and_then(uuid_to_vmid) {
         let vmid = vmid.to_string();
         info!("VMID {} profile", vmid);
-        if let Some(config_override) = config_overrides.vm.get(vmid.as_str()) {
-            info!("Applying proxmox VMID {} profile overrides", vmid);
+        if let Ok(config_overrides) = &config_overrides {
+            if let Some(config_override) = config_overrides.vm.get(vmid.as_str()) {
+                info!("Applying proxmox VMID {} profile overrides", vmid);
 
-            if !apply_profile_override(config, &vgpu_type, config_override) {
+                if !apply_profile_override(config, &vgpu_type, config_override) {
+                    return false;
+                }
+            }
+        }
+
+        if let Some(config_override) = load_proxmox_vm_profile_override(vmid.as_str()) {
+            if !apply_proxmox_profile_override(config, &vgpu_type, config_override) {
                 return false;
             }
         }
     }
 
     true
+}
+
+#[cfg(feature = "proxmox")]
+fn load_proxmox_vm_profile_override(vmid: &str) -> Option<VgpuProfileOverride> {
+    let config_path = PathBuf::from(format!("/etc/pve/qemu-server/{}.conf", vmid));
+    let config_data = match fs::read_to_string(&config_path) {
+        Ok(data) => data,
+        Err(e) => {
+            if e.kind() != ErrorKind::NotFound {
+                error!(
+                    "Failed to read Proxmox VM config '{}': {}",
+                    config_path.display(),
+                    e
+                );
+            }
+
+            return None;
+        }
+    };
+
+    let mut selected: Option<(u32, String, VgpuProfileOverride)> = None;
+    let mut eligible_count = 0;
+
+    for line in config_data.lines() {
+        let line = line.trim();
+
+        if line.starts_with('[') {
+            break;
+        }
+
+        if let Some((hostpci_index, config_override)) = parse_proxmox_hostpci_override(line) {
+            eligible_count += 1;
+
+            if selected
+                .as_ref()
+                .map(|(selected_index, _, _)| hostpci_index < *selected_index)
+                .unwrap_or(true)
+            {
+                selected = Some((hostpci_index, line.to_string(), config_override));
+            }
+        }
+    }
+
+    if eligible_count > 1 {
+        warning!(
+            "Multiple eligible Proxmox vGPU hostpci entries found for VMID {}; using the lowest hostpci index",
+            vmid
+        );
+    }
+
+    selected.map(|(_, line, config_override)| {
+        info!("Applying Proxmox VMID {} hostpci config: {}", vmid, line);
+        config_override
+    })
+}
+
+#[cfg(feature = "proxmox")]
+fn parse_proxmox_hostpci_override(line: &str) -> Option<(u32, VgpuProfileOverride)> {
+    let (key, value) = split_once(line, ':')?;
+    let hostpci_index = parse_hostpci_index(key.trim())?;
+
+    let value = value.trim();
+    let mut has_nvidia_mdev = false;
+    let mut vgpu_unlock = false;
+    let mut config_override = VgpuProfileOverride::default();
+
+    for entry in value.split(',') {
+        let entry = entry.trim();
+        let (name, value) = match split_once(entry, '=') {
+            Some(parts) => parts,
+            None => continue,
+        };
+
+        let name = name.trim();
+        let value = value.trim();
+
+        match name {
+            "mdev" => has_nvidia_mdev = value.starts_with("nvidia-"),
+            "vgpu-unlock" => vgpu_unlock = parse_proxmox_bool(value).unwrap_or(false),
+            "framebuffer" => match value.parse::<u64>() {
+                Ok(framebuffer_mb) => match framebuffer_mb.checked_mul(1024 * 1024) {
+                    Some(framebuffer) => config_override.framebuffer = Some(framebuffer),
+                    None => error!("Proxmox hostpci framebuffer '{}' MB is too large", value),
+                },
+                Err(e) => error!("Invalid Proxmox hostpci framebuffer '{}': {}", value, e),
+            },
+            "cuda" => match parse_proxmox_bool(value) {
+                Some(cuda) => config_override.cuda_enabled = Some(cuda as u32),
+                None => error!("Invalid Proxmox hostpci cuda '{}'", value),
+            },
+            "frl" => match parse_proxmox_bool(value) {
+                Some(frl) => config_override.frl_enabled = Some(frl as u32),
+                None => error!("Invalid Proxmox hostpci frl '{}'", value),
+            },
+            "vgpu-type" => config_override.vgpu_type = Some(value.to_string()),
+            _ => {}
+        }
+    }
+
+    if vgpu_unlock && has_nvidia_mdev {
+        Some((hostpci_index, config_override))
+    } else {
+        None
+    }
+}
+
+#[cfg(feature = "proxmox")]
+fn parse_hostpci_index(key: &str) -> Option<u32> {
+    let index = key.strip_prefix("hostpci")?;
+
+    if index.is_empty() {
+        return None;
+    }
+
+    index.parse().ok()
+}
+
+#[cfg(feature = "proxmox")]
+fn parse_proxmox_bool(value: &str) -> Option<bool> {
+    match value {
+        "1" | "on" | "yes" | "true" => Some(true),
+        "0" | "off" | "no" | "false" => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "proxmox")]
+fn split_once(value: &str, delimiter: char) -> Option<(&str, &str)> {
+    let mut parts = value.splitn(2, delimiter);
+    let key = parts.next()?;
+    let value = parts.next()?;
+
+    Some((key, value))
+}
+
+#[cfg(feature = "proxmox")]
+fn apply_proxmox_profile_override<C: VgpuConfigLike>(
+    config: &mut C,
+    vgpu_type: &str,
+    mut config_override: VgpuProfileOverride,
+) -> bool {
+    if let Some(total_framebuffer) = config_override.framebuffer {
+        let framebuffer_reservation = *config.fb_reservation();
+
+        if total_framebuffer < framebuffer_reservation {
+            error!(
+                "Invalid Proxmox framebuffer override for {}: requested total framebuffer {} bytes is smaller than framebuffer_reservation {} bytes; computed framebuffer would be negative",
+                vgpu_type,
+                total_framebuffer,
+                framebuffer_reservation
+            );
+
+            return false;
+        }
+
+        let framebuffer = total_framebuffer - framebuffer_reservation;
+
+        info!(
+            "Proxmox framebuffer calculation for {}: requested total framebuffer {} bytes - framebuffer_reservation {} bytes = framebuffer {} bytes",
+            vgpu_type,
+            total_framebuffer,
+            framebuffer_reservation,
+            framebuffer
+        );
+
+        config_override.framebuffer = Some(framebuffer);
+    }
+
+    apply_profile_override(config, vgpu_type, &config_override)
 }
 
 fn apply_profile_override<C: VgpuConfigLike>(
